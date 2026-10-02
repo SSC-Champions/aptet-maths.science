@@ -19,9 +19,17 @@ export interface SubjectInfo {
   totalAvailable: number;
 }
 
+export interface StepExplanation {
+  formulaOrConcept: string;
+  givenData: string;
+  stepByStepCalc: string[];
+  conclusion: string;
+}
+
 export interface Question {
   id: number;
   subjectId: SubjectId;
+  pdfQuestionNo: number; // Exact question number as in the PDF
   topic?: string;
   questionEn?: string;
   questionTe?: string;
@@ -32,16 +40,24 @@ export interface Question {
   }[];
   correctAnswer: number; // 1 | 2 | 3 | 4
   explanation?: string;
+  // Step-by-step explanation for Mathematics & Physical Science
+  stepExplanation?: StepExplanation;
+  // Memory Trick / Mnemonic for CDP, Telugu, English, Biology
+  memoryTrick?: string;
+  briefExplanation?: string;
 }
 
 export type QuizMode = 'practice' | 'mastery' | 'timed_exam' | 'flashcard';
 
 export interface QuizAttempt {
   id: string;
+  userId: string;
   subjectId: SubjectId;
   subjectName: string;
   mode: QuizMode;
   date: string;
+  startPdfNo: number;
+  endPdfNo: number;
   totalQuestions: number;
   correctAnswers: number;
   scorePercentage: number;
@@ -58,6 +74,17 @@ export interface SubjectProgress {
   bestScorePercentage: number;
   lastPracticed?: string;
   masteryLevel: 'Novice' | 'Intermediate' | 'Proficient' | 'Master';
+  lastQuestionIndex: number;
+  answeredQuestionIds: number[];
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email?: string;
+  avatar: string;
+  registeredAt: string;
+  isGoogleLinked?: boolean;
 }
 
 export interface UserStats {
@@ -72,6 +99,7 @@ export interface UserStats {
 
 export interface StudyReminder {
   id: string;
+  userId: string;
   subjectId: SubjectId;
   title: string;
   time: string; // "18:30"

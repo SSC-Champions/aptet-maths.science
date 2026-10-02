@@ -5,24 +5,215 @@ import {
   StudyReminder, 
   GoogleSheetsConfig, 
   LeaderboardUser,
-  SubjectId 
+  SubjectId,
+  UserProfile,
+  Question
 } from '../types/quiz';
-import { DEFAULT_REMINDERS, INITIAL_LEADERBOARD, SUBJECTS } from '../data/questionsData';
+import { DEFAULT_REMINDERS, INITIAL_LEADERBOARD, SUBJECTS, QUESTIONS } from '../data/questionsData';
 
-const KEYS = {
-  ATTEMPTS: 'vidyasetu_attempts_v1',
-  PROGRESS: 'vidyasetu_progress_v1',
-  STATS: 'vidyasetu_stats_v1',
-  REMINDERS: 'vidyasetu_reminders_v1',
-  SHEETS: 'vidyasetu_sheets_cfg_v1',
-  LEADERBOARD: 'vidyasetu_leaderboard_v1',
-  BOOKMARKS: 'vidyasetu_bookmarks_v1',
-  USER_NAME: 'vidyasetu_user_name_v1'
+const GLOBAL_KEYS = {
+  USERS_LIST: 'vidyasetu_users_v2',
+  ACTIVE_USER_ID: 'vidyasetu_active_user_id_v2',
+  SHEETS_CONFIG: 'vidyasetu_sheets_cfg_v2',
+  LEADERBOARD: 'vidyasetu_leaderboard_v2'
 };
 
-export const getStoredAttempts = (): QuizAttempt[] => {
+const DEFAULT_USER: UserProfile = {
+  id: 'usr-default-swamy',
+  name: 'Narayana Swamy',
+  email: 'swamy6677@gmail.com',
+  avatar: '👨‍🎓',
+  registeredAt: '2026-10-01',
+  isGoogleLinked: true
+};
+
+// ==========================================
+// USER PROFILE & LOGIN MANAGEMENT
+// ==========================================
+
+export const getAllUsers = (): UserProfile[] => {
   try {
-    const raw = localStorage.getItem(KEYS.ATTEMPTS);
+    const raw = localStorage.getItem(GLOBAL_KEYS.USERS_LIST);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [DEFAULT_USER];
+};
+
+export const getActiveUser = (): UserProfile => {
+  const users = getAllUsers();
+  const activeId = localStorage.getItem(GLOBAL_KEYS.ACTIVE_USER_ID);
+  const found = users.find(u => u.id === activeId);
+  return found || users[0] || DEFAULT_USER;
+};
+
+export const setActiveUser = (userId: string): void => {
+  localStorage.setItem(GLOBAL_KEYS.ACTIVE_USER_ID, userId);
+};
+
+export const createOrLoginUser = (name: string, email?: string, avatar: string = '🎓'): UserProfile => {
+  const users = getAllUsers();
+  const cleanName = name.trim();
+  
+  // Check if exists
+  let user = users.find(u => 
+    u.name.toLowerCase() === cleanName.toLowerCase() || 
+    (email && u.email && u.email.toLowerCase() === email.toLowerCase())
+  );
+
+  if (!user) {
+    user = {
+      id: `usr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: cleanName,
+      email: email || '',
+      avatar,
+      registeredAt: new Date().toISOString().split('T')[0],
+      isGoogleLinked: !!email
+    };
+    users.push(user);
+    localStorage.setItem(GLOBAL_KEYS.USERS_LIST, JSON.stringify(users));
+  } else if (email && !user.email) {
+    user.email = email;
+    user.isGoogleLinked = true;
+    localStorage.setItem(GLOBAL_KEYS.USERS_LIST, JSON.stringify(users));
+  }
+
+  setActiveUser(user.id);
+  return user;
+};
+
+export const linkGoogleUser = (name: string, email: string, photoURL?: string): UserProfile => {
+  const users = getAllUsers();
+  let user = users.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+
+  if (!user) {
+    // Check if active user has no email, attach to them
+    const active = getActiveUser();
+    if (!active.isGoogleLinked && (!active.email || active.email === '')) {
+      active.name = name || active.name;
+      active.email = email;
+      active.isGoogleLinked = true;
+      active.avatar = photoURL ? '🌐' : active.avatar;
+      const updatedList = users.map(u => u.id === active.id ? active : u);
+      localStorage.setItem(GLOBAL_KEYS.USERS_LIST, JSON.stringify(updatedList));
+      return active;
+    }
+
+    user = {
+      id: `usr-google-${Date.now()}`,
+      name: name || 'Google Learner',
+      email,
+      avatar: '🌐',
+      registeredAt: new Date().toISOString().split('T')[0],
+      isGoogleLinked: true
+    };
+    users.push(user);
+    localStorage.setItem(GLOBAL_KEYS.USERS_LIST, JSON.stringify(users));
+  } else {
+    user.name = name || user.name;
+    user.isGoogleLinked = true;
+    localStorage.setItem(GLOBAL_KEYS.USERS_LIST, JSON.stringify(users));
+  }
+
+  setActiveUser(user.id);
+  return user;
+};
+
+// ==========================================
+// SEQUENTIAL PDF QUESTION DISPATCHER (NO REPEATS)
+// ==========================================
+
+export const getUserAnsweredQuestionIds = (userId: string, subjectId: SubjectId): number[] => {
+  try {
+    const raw = localStorage.getItem(`vidyasetu_${userId}_answered_${subjectId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const getNextQuestionsForUser = (
+  userId: string,
+  subjectId: SubjectId,
+  count: number
+): {
+  questions: Question[];
+  startPdfNo: number;
+  endPdfNo: number;
+  allCompleted: boolean;
+  totalAnswered: number;
+  totalAvailable: number;
+} => {
+  // 1. Get all questions for this subject sorted in exact PDF order
+  const allSubjQuestions = QUESTIONS
+    .filter(q => q.subjectId === subjectId)
+    .sort((a, b) => a.pdfQuestionNo - b.pdfQuestionNo);
+
+  // 2. Filter out already answered questions for this user
+  const answeredIds = getUserAnsweredQuestionIds(userId, subjectId);
+  const remainingQuestions = allSubjQuestions.filter(q => !answeredIds.includes(q.id));
+
+  // If user completed all available questions in this subject
+  if (remainingQuestions.length === 0) {
+    return {
+      questions: allSubjQuestions.slice(0, count), // fallback to beginning
+      startPdfNo: allSubjQuestions[0]?.pdfQuestionNo || 1,
+      endPdfNo: allSubjQuestions[Math.min(count, allSubjQuestions.length) - 1]?.pdfQuestionNo || count,
+      allCompleted: true,
+      totalAnswered: allSubjQuestions.length,
+      totalAvailable: allSubjQuestions.length
+    };
+  }
+
+  // 3. Take next 'count' questions in continuous sequence
+  const batch = remainingQuestions.slice(0, count);
+  const startPdfNo = batch[0].pdfQuestionNo;
+  const endPdfNo = batch[batch.length - 1].pdfQuestionNo;
+
+  return {
+    questions: batch,
+    startPdfNo,
+    endPdfNo,
+    allCompleted: false,
+    totalAnswered: answeredIds.length,
+    totalAvailable: allSubjQuestions.length
+  };
+};
+
+export const markQuestionsAsAnsweredForUser = (
+  userId: string, 
+  subjectId: SubjectId, 
+  questionIds: number[]
+): void => {
+  const current = getUserAnsweredQuestionIds(userId, subjectId);
+  const updatedSet = new Set([...current, ...questionIds]);
+  localStorage.setItem(
+    `vidyasetu_${userId}_answered_${subjectId}`, 
+    JSON.stringify(Array.from(updatedSet))
+  );
+};
+
+export const resetUserProgression = (userId: string, subjectId: SubjectId): void => {
+  localStorage.removeItem(`vidyasetu_${userId}_answered_${subjectId}`);
+  // Also update subject progress map
+  const map = getSubjectProgressMap(userId);
+  if (map[subjectId]) {
+    map[subjectId].lastQuestionIndex = 0;
+    map[subjectId].answeredQuestionIds = [];
+    localStorage.setItem(`vidyasetu_${userId}_progress`, JSON.stringify(map));
+  }
+};
+
+// ==========================================
+// USER ATTEMPTS & PROGRESS (ISOLATED PER USER)
+// ==========================================
+
+export const getStoredAttempts = (userId?: string): QuizAttempt[] => {
+  const uid = userId || getActiveUser().id;
+  try {
+    const raw = localStorage.getItem(`vidyasetu_${uid}_attempts`);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -30,25 +221,26 @@ export const getStoredAttempts = (): QuizAttempt[] => {
 };
 
 export const saveQuizAttempt = (attempt: QuizAttempt): void => {
-  const attempts = getStoredAttempts();
+  const uid = attempt.userId;
+  const attempts = getStoredAttempts(uid);
   attempts.unshift(attempt);
-  localStorage.setItem(KEYS.ATTEMPTS, JSON.stringify(attempts.slice(0, 100)));
+  localStorage.setItem(`vidyasetu_${uid}_attempts`, JSON.stringify(attempts.slice(0, 100)));
 
   // Update subject progress
-  updateSubjectProgress(attempt);
+  updateSubjectProgress(uid, attempt);
   // Update overall stats
-  updateUserStats(attempt);
-  // Update current user position in leaderboard
+  updateUserStats(uid, attempt);
+  // Update leaderboard
   updateLeaderboardScores(attempt);
 };
 
-export const getSubjectProgressMap = (): Record<string, SubjectProgress> => {
+export const getSubjectProgressMap = (userId?: string): Record<string, SubjectProgress> => {
+  const uid = userId || getActiveUser().id;
   try {
-    const raw = localStorage.getItem(KEYS.PROGRESS);
+    const raw = localStorage.getItem(`vidyasetu_${uid}_progress`);
     if (raw) return JSON.parse(raw);
   } catch {}
 
-  // Initialize defaults
   const map: Record<string, SubjectProgress> = {};
   SUBJECTS.forEach(s => {
     map[s.id] = {
@@ -57,21 +249,25 @@ export const getSubjectProgressMap = (): Record<string, SubjectProgress> => {
       totalAnswered: 0,
       correctAnswered: 0,
       bestScorePercentage: 0,
-      masteryLevel: 'Novice'
+      masteryLevel: 'Novice',
+      lastQuestionIndex: 0,
+      answeredQuestionIds: []
     };
   });
   return map;
 };
 
-const updateSubjectProgress = (attempt: QuizAttempt) => {
-  const map = getSubjectProgressMap();
+const updateSubjectProgress = (userId: string, attempt: QuizAttempt) => {
+  const map = getSubjectProgressMap(userId);
   const current = map[attempt.subjectId] || {
     subjectId: attempt.subjectId,
     quizzesTaken: 0,
     totalAnswered: 0,
     correctAnswered: 0,
     bestScorePercentage: 0,
-    masteryLevel: 'Novice'
+    masteryLevel: 'Novice',
+    lastQuestionIndex: 0,
+    answeredQuestionIds: []
   };
 
   current.quizzesTaken += 1;
@@ -79,6 +275,7 @@ const updateSubjectProgress = (attempt: QuizAttempt) => {
   current.correctAnswered += attempt.correctAnswers;
   current.bestScorePercentage = Math.max(current.bestScorePercentage, attempt.scorePercentage);
   current.lastPracticed = attempt.date;
+  current.lastQuestionIndex = attempt.endPdfNo;
 
   const avgAccuracy = current.totalAnswered > 0 
     ? Math.round((current.correctAnswered / current.totalAnswered) * 100) 
@@ -95,12 +292,13 @@ const updateSubjectProgress = (attempt: QuizAttempt) => {
   }
 
   map[attempt.subjectId] = current;
-  localStorage.setItem(KEYS.PROGRESS, JSON.stringify(map));
+  localStorage.setItem(`vidyasetu_${userId}_progress`, JSON.stringify(map));
 };
 
-export const getUserStats = (): UserStats => {
+export const getUserStats = (userId?: string): UserStats => {
+  const uid = userId || getActiveUser().id;
   try {
-    const raw = localStorage.getItem(KEYS.STATS);
+    const raw = localStorage.getItem(`vidyasetu_${uid}_stats`);
     if (raw) return JSON.parse(raw);
   } catch {}
 
@@ -115,8 +313,8 @@ export const getUserStats = (): UserStats => {
   };
 };
 
-const updateUserStats = (attempt: QuizAttempt) => {
-  const stats = getUserStats();
+const updateUserStats = (userId: string, attempt: QuizAttempt) => {
+  const stats = getUserStats(userId);
   stats.quizzesCompleted += 1;
   stats.totalQuestionsAnswered += attempt.totalQuestions;
   stats.correctAnswersTotal += attempt.correctAnswers;
@@ -137,7 +335,6 @@ const updateUserStats = (attempt: QuizAttempt) => {
     stats.lastActiveDate = today;
   }
 
-  // Check new achievements
   if (stats.quizzesCompleted >= 1 && !stats.achievements.includes('Quiz Initiator')) {
     stats.achievements.push('Quiz Initiator');
   }
@@ -154,28 +351,32 @@ const updateUserStats = (attempt: QuizAttempt) => {
     stats.achievements.push('Streak Champion');
   }
 
-  localStorage.setItem(KEYS.STATS, JSON.stringify(stats));
+  localStorage.setItem(`vidyasetu_${userId}_stats`, JSON.stringify(stats));
 };
 
-export const getStoredReminders = (): StudyReminder[] => {
+// ==========================================
+// REMINDERS & SHEETS
+// ==========================================
+
+export const getStoredReminders = (userId?: string): StudyReminder[] => {
+  const uid = userId || getActiveUser().id;
   try {
-    const raw = localStorage.getItem(KEYS.REMINDERS);
-    return raw ? JSON.parse(raw) : DEFAULT_REMINDERS;
-  } catch {
-    return DEFAULT_REMINDERS;
-  }
+    const raw = localStorage.getItem(`vidyasetu_${uid}_reminders`);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return DEFAULT_REMINDERS.map(r => ({ ...r, userId: uid }));
 };
 
-export const saveReminders = (reminders: StudyReminder[]): void => {
-  localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
+export const saveReminders = (reminders: StudyReminder[], userId?: string): void => {
+  const uid = userId || getActiveUser().id;
+  localStorage.setItem(`vidyasetu_${uid}_reminders`, JSON.stringify(reminders));
 };
 
 export const getSheetsConfig = (): GoogleSheetsConfig => {
   try {
-    const raw = localStorage.getItem(KEYS.SHEETS);
+    const raw = localStorage.getItem(GLOBAL_KEYS.SHEETS_CONFIG);
     if (raw) return JSON.parse(raw);
   } catch {}
-
   return {
     spreadsheetId: null,
     spreadsheetUrl: null,
@@ -185,31 +386,26 @@ export const getSheetsConfig = (): GoogleSheetsConfig => {
 };
 
 export const saveSheetsConfig = (cfg: GoogleSheetsConfig): void => {
-  localStorage.setItem(KEYS.SHEETS, JSON.stringify(cfg));
+  localStorage.setItem(GLOBAL_KEYS.SHEETS_CONFIG, JSON.stringify(cfg));
 };
 
-export const getUserName = (): string => {
-  return localStorage.getItem(KEYS.USER_NAME) || 'Student Aspirant';
-};
-
-export const setUserName = (name: string): void => {
-  localStorage.setItem(KEYS.USER_NAME, name);
-};
+// ==========================================
+// LEADERBOARD
+// ==========================================
 
 export const getLeaderboardData = (): LeaderboardUser[] => {
   try {
-    const raw = localStorage.getItem(KEYS.LEADERBOARD);
+    const raw = localStorage.getItem(GLOBAL_KEYS.LEADERBOARD);
     let list: LeaderboardUser[] = raw ? JSON.parse(raw) : INITIAL_LEADERBOARD;
-    const stats = getUserStats();
-    const currentName = getUserName();
+    const active = getActiveUser();
+    const stats = getUserStats(active.id);
 
-    // Check if current user is present
-    const exists = list.some(u => u.isCurrentUser);
+    const exists = list.some(u => u.id === active.id || u.isCurrentUser);
     if (!exists) {
       list.push({
-        id: 'current-user-me',
-        name: `${currentName} (You)`,
-        avatar: '🎓',
+        id: active.id,
+        name: `${active.name} (You)`,
+        avatar: active.avatar || '🎓',
         xp: stats.totalXp,
         quizzesTaken: stats.quizzesCompleted,
         accuracy: stats.totalQuestionsAnswered > 0 
@@ -221,23 +417,25 @@ export const getLeaderboardData = (): LeaderboardUser[] => {
       });
     } else {
       list = list.map(u => {
-        if (u.isCurrentUser) {
+        if (u.id === active.id || u.isCurrentUser) {
           return {
             ...u,
-            name: `${currentName} (You)`,
+            id: active.id,
+            name: `${active.name} (You)`,
+            avatar: active.avatar || u.avatar,
             xp: stats.totalXp,
             quizzesTaken: stats.quizzesCompleted,
             accuracy: stats.totalQuestionsAnswered > 0 
               ? Math.round((stats.correctAnswersTotal / stats.totalQuestionsAnswered) * 100) 
               : u.accuracy,
             streak: stats.currentStreakDays,
+            isCurrentUser: true
           };
         }
         return u;
       });
     }
 
-    // Sort by XP descending and calculate rank
     list.sort((a, b) => b.xp - a.xp);
     return list.map((user, idx) => ({ ...user, rank: idx + 1 }));
   } catch {
@@ -247,14 +445,15 @@ export const getLeaderboardData = (): LeaderboardUser[] => {
 
 const updateLeaderboardScores = (attempt: QuizAttempt) => {
   const list = getLeaderboardData();
-  const currentName = getUserName();
-  const stats = getUserStats();
+  const active = getActiveUser();
+  const stats = getUserStats(active.id);
 
   const updated = list.map(u => {
-    if (u.isCurrentUser) {
+    if (u.id === active.id || u.isCurrentUser) {
       return {
         ...u,
-        name: `${currentName} (You)`,
+        id: active.id,
+        name: `${active.name} (You)`,
         xp: stats.totalXp,
         quizzesTaken: stats.quizzesCompleted,
         accuracy: stats.totalQuestionsAnswered > 0 
@@ -267,7 +466,7 @@ const updateLeaderboardScores = (attempt: QuizAttempt) => {
   });
 
   updated.sort((a, b) => b.xp - a.xp);
-  localStorage.setItem(KEYS.LEADERBOARD, JSON.stringify(updated));
+  localStorage.setItem(GLOBAL_KEYS.LEADERBOARD, JSON.stringify(updated));
 };
 
 export const playStudyChime = () => {
@@ -290,7 +489,5 @@ export const playStudyChime = () => {
 
     osc.start();
     osc.stop(audioCtx.currentTime + 0.8);
-  } catch {
-    // AudioContext not allowed before user gesture or unavailable
-  }
+  } catch {}
 };

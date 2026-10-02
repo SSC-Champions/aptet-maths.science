@@ -10,15 +10,19 @@ import {
   Play, 
   Sparkles, 
   Clock, 
-  Award,
-  ChevronRight,
-  Layers
+  ChevronRight, 
+  Layers,
+  RotateCcw,
+  CheckCircle2
 } from 'lucide-react';
 
 interface SubjectCardProps {
   subject: SubjectInfo;
   progress: SubjectProgress | undefined;
-  onStartQuiz: (subjectId: SubjectId, mode: QuizMode, count?: number) => void;
+  answeredCount: number;
+  totalAvailable: number;
+  onStartSequentialQuiz: (subjectId: SubjectId, count: number) => void;
+  onResetProgression: (subjectId: SubjectId) => void;
   onOpenFlashcards: (subjectId: SubjectId) => void;
 }
 
@@ -34,13 +38,18 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 export const SubjectCard: React.FC<SubjectCardProps> = ({
   subject,
   progress,
-  onStartQuiz,
+  answeredCount,
+  totalAvailable,
+  onStartSequentialQuiz,
+  onResetProgression,
   onOpenFlashcards
 }) => {
   const quizzesTaken = progress?.quizzesTaken || 0;
   const bestScore = progress?.bestScorePercentage || 0;
   const mastery = progress?.masteryLevel || 'Novice';
-  const totalAnswered = progress?.totalAnswered || 0;
+  const isCompletedAll = answeredCount >= totalAvailable && totalAvailable > 0;
+  const nextQStart = isCompletedAll ? 1 : answeredCount + 1;
+  const nextQEnd = isCompletedAll ? Math.min(10, totalAvailable) : Math.min(answeredCount + 10, totalAvailable);
 
   const getMasteryColor = (level: string) => {
     switch (level) {
@@ -51,13 +60,17 @@ export const SubjectCard: React.FC<SubjectCardProps> = ({
     }
   };
 
+  const progressPct = totalAvailable > 0 
+    ? Math.round((answeredCount / totalAvailable) * 100) 
+    : 0;
+
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col justify-between group">
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col justify-between group">
       
       {/* Top Banner & Subject Info */}
-      <div className="p-5 sm:p-6">
+      <div className="p-6">
         <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="w-12 h-12 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/60 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+          <div className="w-12 h-12 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/60 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
             {ICON_MAP[subject.icon] || <BookOpen className="w-6 h-6 text-indigo-500" />}
           </div>
           <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${getMasteryColor(mastery)}`}>
@@ -75,52 +88,72 @@ export const SubjectCard: React.FC<SubjectCardProps> = ({
           {subject.description}
         </p>
 
-        {/* Progress & Stats Bar */}
-        <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-800">
+        {/* Sequential Progression Progress */}
+        <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-3.5 border border-slate-100 dark:border-slate-800">
           <div className="flex items-center justify-between text-xs mb-1.5 font-medium">
-            <span className="text-slate-500 dark:text-slate-400">Mastery Progress</span>
-            <span className="font-bold text-slate-800 dark:text-slate-200">{bestScore}%</span>
+            <span className="text-slate-600 dark:text-slate-300 font-semibold">
+              PDF Sequence Progress
+            </span>
+            <span className="font-bold text-indigo-600 dark:text-indigo-400">
+              {answeredCount} / {totalAvailable} ({progressPct}%)
+            </span>
           </div>
+
           <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
             <div 
               className={`h-full bg-gradient-to-r ${subject.gradient} rounded-full transition-all duration-500`}
-              style={{ width: `${Math.min(100, Math.max(bestScore, 4))}%` }}
+              style={{ width: `${Math.min(100, Math.max(progressPct, 4))}%` }}
             />
           </div>
+
           <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium">
-            <span>{quizzesTaken} tests taken</span>
-            <span>{totalAnswered} questions solved</span>
+            <span>
+              {isCompletedAll ? (
+                <span className="text-emerald-600 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> All PDF bits completed!
+                </span>
+              ) : (
+                <span>Next up: PDF #{nextQStart} - #{nextQEnd}</span>
+              )}
+            </span>
+            <span>Best: {bestScore}%</span>
           </div>
         </div>
       </div>
 
       {/* Action Buttons */}
       <div className="p-4 sm:p-5 bg-slate-50/70 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-800/80 flex flex-col gap-2">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => onStartQuiz(subject.id, 'practice', 10)}
-            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs hover:shadow-indigo-500/20 transition-all"
+            onClick={() => onStartSequentialQuiz(subject.id, 10)}
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs hover:shadow-indigo-500/20 transition-all"
           >
             <Play className="w-3.5 h-3.5 fill-white" />
-            Quick (10Q)
+            {isCompletedAll ? 'Practice Again (10Q)' : `Continue PDF #${nextQStart}–#${nextQEnd}`}
           </button>
 
-          <button
-            onClick={() => onStartQuiz(subject.id, 'mastery', 25)}
-            className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-semibold text-xs transition-all"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            Mastery (25Q)
-          </button>
+          {answeredCount > 0 && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Reset question progression for ${subject.name}? You will start fresh from Question #1 in the PDF.`)) {
+                  onResetProgression(subject.id);
+                }
+              }}
+              title="Reset PDF Question sequence to #1"
+              className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 hover:text-indigo-600 transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         <div className="flex items-center justify-between pt-1">
           <button
-            onClick={() => onStartQuiz(subject.id, 'timed_exam', 15)}
-            className="text-[11px] font-medium text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 transition-colors"
+            onClick={() => onStartSequentialQuiz(subject.id, 20)}
+            className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 transition-colors"
           >
-            <Clock className="w-3 h-3 text-slate-400" />
-            Timed Exam Mode
+            <Sparkles className="w-3 h-3 text-amber-500" />
+            Long Batch (20Q)
           </button>
 
           <button

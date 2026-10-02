@@ -14,7 +14,10 @@ import {
   ExternalLink,
   ChevronRight,
   Filter,
-  Check
+  Check,
+  Binary,
+  Lightbulb,
+  ArrowRight
 } from 'lucide-react';
 
 interface QuizResultProps {
@@ -23,6 +26,7 @@ interface QuizResultProps {
   questions: Question[];
   userAnswers: Record<number, number>;
   flaggedSet: Set<number>;
+  onContinueNextBatch: () => void;
   onRetake: () => void;
   onBackToHome: () => void;
   onSyncToSheets: (attempt: QuizAttempt) => Promise<boolean>;
@@ -37,6 +41,7 @@ export const QuizResult: React.FC<QuizResultProps> = ({
   questions,
   userAnswers,
   flaggedSet,
+  onContinueNextBatch,
   onRetake,
   onBackToHome,
   onSyncToSheets,
@@ -97,6 +102,7 @@ export const QuizResult: React.FC<QuizResultProps> = ({
 
   const minutes = Math.floor(attempt.timeSpentSeconds / 60);
   const seconds = attempt.timeSpentSeconds % 60;
+  const isMathOrPhysics = subject.id === 'mathematics' || subject.id === 'physical_science';
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -111,20 +117,25 @@ export const QuizResult: React.FC<QuizResultProps> = ({
             <Trophy className="w-8 h-8 text-amber-500" />
           </div>
 
-          <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
-            {subject.name} • {attempt.mode.replace('_', ' ').toUpperCase()}
-          </span>
+          <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
+              {subject.name}
+            </span>
+            <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-3 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
+              PDF Sequence Questions #{attempt.startPdfNo}–#{attempt.endPdfNo} Completed
+            </span>
+          </div>
 
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-3">
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-2">
             {attempt.scorePercentage >= 80 
               ? 'Outstanding Performance! 🎉' 
               : attempt.scorePercentage >= 60 
               ? 'Good Effort! Keep Practicing 👍' 
-              : 'Keep Learning & Strengthening Concepts 💪'}
+              : 'Review Explanations Below to Master Concepts 💪'}
           </h2>
 
-          <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-            Completed on {attempt.date}
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Questions #{attempt.startPdfNo} to #{attempt.endPdfNo} are recorded. Next quiz will advance continuously to the subsequent questions without repetition!
           </p>
 
           {/* Key Stat Badges */}
@@ -159,7 +170,34 @@ export const QuizResult: React.FC<QuizResultProps> = ({
             </div>
           </div>
 
-          {/* Google Sheets Sync Integration Area */}
+          {/* Primary Action Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-3 mt-7">
+            <button
+              onClick={onContinueNextBatch}
+              className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 transition-all"
+            >
+              <span>Continue Next PDF Questions</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={onRetake}
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 font-semibold text-xs sm:text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Retake This Batch
+            </button>
+
+            <button
+              onClick={onBackToHome}
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl border border-slate-200 dark:border-slate-700 font-semibold text-xs sm:text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            >
+              <BookOpen className="w-4 h-4" />
+              All Subjects
+            </button>
+          </div>
+
+          {/* Google Sheets Sync Area */}
           <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800 max-w-xl mx-auto">
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <button
@@ -198,25 +236,6 @@ export const QuizResult: React.FC<QuizResultProps> = ({
               </p>
             )}
           </div>
-
-          {/* Action CTAs */}
-          <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-            <button
-              onClick={onRetake}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Retake Quiz
-            </button>
-
-            <button
-              onClick={onBackToHome}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md shadow-indigo-500/20 transition-all"
-            >
-              <BookOpen className="w-4 h-4" />
-              All Subjects
-            </button>
-          </div>
         </div>
       </div>
 
@@ -227,10 +246,12 @@ export const QuizResult: React.FC<QuizResultProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-              Answer Review &amp; Explanations
+              Step Explanations &amp; Memory Tricks
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Review every question with detailed bilingual explanation
+              {isMathOrPhysics 
+                ? 'Comprehensive step-by-step mathematical calculations and formulas' 
+                : 'Brief explanations paired with easy memory tricks for high retention'}
             </p>
           </div>
 
@@ -266,13 +287,14 @@ export const QuizResult: React.FC<QuizResultProps> = ({
         <div className="space-y-6">
           {filteredQuestions.map((q, idx) => {
             const selectedKey = userAnswers[q.id];
+            const isAnswered = selectedKey !== undefined;
             const isCorrect = selectedKey === q.correctAnswer;
             const isFlagged = flaggedSet.has(q.id);
 
             return (
               <div 
                 key={q.id}
-                className={`p-5 rounded-2xl border transition-all ${
+                className={`p-6 rounded-3xl border transition-all ${
                   isCorrect 
                     ? 'border-emerald-200/80 bg-emerald-50/20 dark:border-emerald-900/60 dark:bg-emerald-950/10' 
                     : 'border-rose-200/80 bg-rose-50/20 dark:border-rose-900/60 dark:bg-rose-950/10'
@@ -281,18 +303,18 @@ export const QuizResult: React.FC<QuizResultProps> = ({
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex items-center gap-2">
-                    <span className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-xs ${
+                    <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs ${
                       isCorrect ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                     }`}>
-                      #{idx + 1}
+                      #{q.pdfQuestionNo}
                     </span>
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${
+                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-lg ${
                       isCorrect ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                     }`}>
-                      {isCorrect ? 'Correct' : 'Incorrect'}
+                      {isCorrect ? 'Correct' : isAnswered ? 'Incorrect' : 'Unanswered'}
                     </span>
                     {q.topic && (
-                      <span className="text-[11px] text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                      <span className="text-[11px] text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-lg">
                         {q.topic}
                       </span>
                     )}
@@ -307,14 +329,14 @@ export const QuizResult: React.FC<QuizResultProps> = ({
                 </div>
 
                 {/* Question */}
-                <div className="space-y-1 mb-4">
+                <div className="space-y-1.5 mb-4">
                   {q.questionEn && (
-                    <p className="font-bold text-slate-900 dark:text-white text-sm sm:text-base">
+                    <p className="font-bold text-slate-900 dark:text-white text-base">
                       {q.questionEn}
                     </p>
                   )}
                   {q.questionTe && (
-                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm">
+                    <p className="font-medium text-slate-800 dark:text-slate-200 text-sm font-sans">
                       {q.questionTe}
                     </p>
                   )}
@@ -336,24 +358,75 @@ export const QuizResult: React.FC<QuizResultProps> = ({
                     return (
                       <div 
                         key={opt.key}
-                        className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${optBg}`}
+                        className={`p-3 rounded-2xl border text-xs flex items-center justify-between gap-2 ${optBg}`}
                       >
                         <div className="flex items-center gap-2 truncate">
                           <span className="font-mono font-bold">({opt.key})</span>
                           <span className="truncate">{opt.textEn || opt.textTe}</span>
                         </div>
-                        {isKey && <Check className="w-4 h-4 shrink-0 text-white" />}
+                        {isKey && <Check className="w-4 h-4 shrink-0 text-white font-bold" />}
                         {isUserChoice && !isCorrect && <XCircle className="w-4 h-4 shrink-0 text-white" />}
                       </div>
                     );
                   })}
                 </div>
 
-                {/* Explanation */}
-                {q.explanation && (
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl text-xs text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60">
-                    <span className="font-bold text-indigo-600 dark:text-indigo-400">Explanation: </span>
-                    {q.explanation}
+                {/* STEP-BY-STEP EXPLANATION FOR MATHEMATICS & PHYSICAL SCIENCE */}
+                {isMathOrPhysics && q.stepExplanation && (
+                  <div className="bg-white/80 dark:bg-slate-800/80 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-700 space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                      <Binary className="w-4 h-4" />
+                      <span>Step-by-Step Derivation &amp; Solution</span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-700/60 font-mono text-xs">
+                      <span className="font-bold text-indigo-600 block">Formula / Principle:</span>
+                      {q.stepExplanation.formulaOrConcept}
+                    </div>
+
+                    <div className="text-xs text-slate-600 dark:text-slate-300">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">Given Data: </span>
+                      {q.stepExplanation.givenData}
+                    </div>
+
+                    <div className="space-y-1.5 pt-1">
+                      <span className="font-bold text-xs text-slate-700 dark:text-slate-300 block">Calculation:</span>
+                      {q.stepExplanation.stepByStepCalc.map((step, sIdx) => (
+                        <div key={sIdx} className="flex items-start gap-2 text-xs font-mono bg-slate-50 dark:bg-slate-900/60 p-2 rounded-lg border border-slate-200/60 dark:border-slate-800">
+                          <span className="font-bold text-indigo-500 shrink-0">Step {sIdx + 1}:</span>
+                          <span>{step}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                      <span className="font-bold">Conclusion: </span>
+                      {q.stepExplanation.conclusion}
+                    </div>
+                  </div>
+                )}
+
+                {/* BRIEF EXPLANATION + MEMORY TRICK FOR CDP, TELUGU, ENGLISH, BIOLOGY */}
+                {!isMathOrPhysics && (
+                  <div className="space-y-2.5">
+                    {q.briefExplanation && (
+                      <div className="p-3 bg-white/80 dark:bg-slate-800/80 rounded-xl text-xs text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700">
+                        <span className="font-bold text-slate-900 dark:text-white">Explanation: </span>
+                        {q.briefExplanation}
+                      </div>
+                    )}
+
+                    {q.memoryTrick && (
+                      <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
+                        <div className="flex items-center gap-1.5 font-bold mb-1 text-amber-800 dark:text-amber-300">
+                          <Lightbulb className="w-4 h-4 fill-amber-500 text-amber-600 shrink-0" />
+                          <span>Easy Memory Trick (గుర్తుంచుకునే సులభ చిట్కా):</span>
+                        </div>
+                        <p className="font-medium">
+                          {q.memoryTrick}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

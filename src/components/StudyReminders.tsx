@@ -17,6 +17,7 @@ import {
 
 interface StudyRemindersProps {
   reminders: StudyReminder[];
+  userId: string;
   onSaveReminders: (updated: StudyReminder[]) => void;
   onStartQuiz: (subjectId: SubjectId) => void;
 }
@@ -27,6 +28,7 @@ const ALL_DAYS: ('Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun')[] = [
 
 export const StudyReminders: React.FC<StudyRemindersProps> = ({
   reminders,
+  userId,
   onSaveReminders,
   onStartQuiz
 }) => {
@@ -68,6 +70,7 @@ export const StudyReminders: React.FC<StudyRemindersProps> = ({
     const subjName = SUBJECTS.find(s => s.id === subjectId)?.name || 'Subject';
     const newReminder: StudyReminder = {
       id: `rem-${Date.now()}`,
+      userId,
       subjectId,
       title: title.trim() || `${subjName} Study Session`,
       time,

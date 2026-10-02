@@ -13,7 +13,8 @@ import {
   UserStats, 
   StudyReminder, 
   GoogleSheetsConfig,
-  LeaderboardUser
+  LeaderboardUser,
+  UserProfile
 } from './types/quiz';
 import { SUBJECTS, QUESTIONS } from './data/questionsData';
 import { 
@@ -28,6 +29,9 @@ import {
   syncAllProgressToSheet 
 } from './services/sheetsService';
 import { 
+  getActiveUser,
+  setActiveUser,
+  linkGoogleUser,
   getStoredAttempts, 
   saveQuizAttempt, 
   getSubjectProgressMap, 
@@ -37,7 +41,11 @@ import {
   getSheetsConfig, 
   saveSheetsConfig,
   getLeaderboardData,
-  playStudyChime
+  playStudyChime,
+  getNextQuestionsForUser,
+  markQuestionsAsAnsweredForUser,
+  resetUserProgression,
+  getUserAnsweredQuestionIds
 } from './services/storageService';
 import { User } from 'firebase/auth';
 
@@ -50,6 +58,7 @@ import { Leaderboard } from './components/Leaderboard';
 import { StudyReminders } from './components/StudyReminders';
 import { FlashcardsView } from './components/FlashcardsView';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
+import { LoginModal } from './components/LoginModal';
 
 import { 
   BookOpen, 
@@ -62,7 +71,9 @@ import {
   Layers, 
   X,
   Flame,
-  FileSpreadsheet
+  FileSpreadsheet,
+  CheckCircle2,
+  ArrowRight
 } from 'lucide-react';
 
 export default function App() {
@@ -70,26 +81,30 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'quizzes' | 'progress' | 'leaderboard' | 'reminders' | 'flashcards'>('quizzes');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Active Quiz State
+  // User Profile & Authentication State
+  const [activeUser, setActiveUserState] = useState<UserProfile>(getActiveUser());
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+
+  // Active Quiz State (with PDF Sequence tracking)
   const [activeSubjectId, setActiveSubjectId] = useState<SubjectId | null>(null);
   const [activeQuizMode, setActiveQuizMode] = useState<QuizMode>('practice');
   const [activeQuizQuestions, setActiveQuizQuestions] = useState<Question[]>([]);
+  const [currentStartPdfNo, setCurrentStartPdfNo] = useState<number>(1);
+  const [currentEndPdfNo, setCurrentEndPdfNo] = useState<number>(10);
   const [lastAttempt, setLastAttempt] = useState<QuizAttempt | null>(null);
   const [lastUserAnswers, setLastUserAnswers] = useState<Record<number, number>>({});
   const [lastFlaggedSet, setLastFlaggedSet] = useState<Set<number>>(new Set());
 
-  // Persistent App State
-  const [progressMap, setProgressMap] = useState<Record<string, SubjectProgress>>(getSubjectProgressMap());
-  const [userStats, setUserStats] = useState<UserStats>(getUserStats());
-  const [attempts, setAttempts] = useState<QuizAttempt[]>(getStoredAttempts());
-  const [reminders, setReminders] = useState<StudyReminder[]>(getStoredReminders());
+  // Persistent App State (Loaded per active user)
+  const [progressMap, setProgressMap] = useState<Record<string, SubjectProgress>>(getSubjectProgressMap(activeUser.id));
+  const [userStats, setUserStats] = useState<UserStats>(getUserStats(activeUser.id));
+  const [attempts, setAttempts] = useState<QuizAttempt[]>(getStoredAttempts(activeUser.id));
+  const [reminders, setReminders] = useState<StudyReminder[]>(getStoredReminders(activeUser.id));
   const [sheetsConfig, setSheetsConfig] = useState<GoogleSheetsConfig>(getSheetsConfig());
   const [leaderboardUsers, setLeaderboardUsers] = useState<LeaderboardUser[]>(getLeaderboardData());
-
-  // Auth State
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [showSheetsModal, setShowSheetsModal] = useState(false);
 
   // In-app Notification Alert Toast
   const [reminderToast, setReminderToast] = useState<{ title: string; notes?: string } | null>(null);
@@ -97,11 +112,31 @@ export default function App() {
   // Flashcards initial subject
   const [flashcardSubjectId, setFlashcardSubjectId] = useState<SubjectId>('cdp');
 
+  // Reload state whenever active user changes
+  const reloadUserState = (newUser: UserProfile) => {
+    setActiveUserState(newUser);
+    setProgressMap(getSubjectProgressMap(newUser.id));
+    setUserStats(getUserStats(newUser.id));
+    setAttempts(getStoredAttempts(newUser.id));
+    setReminders(getStoredReminders(newUser.id));
+    setLeaderboardUsers(getLeaderboardData());
+    setActiveSubjectId(null);
+    setLastAttempt(null);
+  };
+
   // Initialize Firebase Auth listener
   useEffect(() => {
     const unsubscribe = initAuth(
       (user, token) => {
         setCurrentUser(user);
+        if (user.displayName || user.email) {
+          const linked = linkGoogleUser(
+            user.displayName || 'Google Student', 
+            user.email || '', 
+            user.photoURL || undefined
+          );
+          setActiveUserState(linked);
+        }
       },
       () => {
         setCurrentUser(null);
@@ -110,7 +145,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Study Reminder Ticker (Checks every 30 seconds for scheduled times)
+  // Study Reminder Ticker (Every 30 seconds checks for time match)
   useEffect(() => {
     const daysMap: Record<number, 'Sun' | 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat'> = {
       0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat'
@@ -123,14 +158,12 @@ export default function App() {
 
       reminders.forEach(r => {
         if (r.enabled && r.time === currentTimeStr && r.days.includes(currentDay)) {
-          // Play chime
           playStudyChime();
           setReminderToast({ title: r.title, notes: r.notes });
 
-          // Browser notification if granted
           if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
             new Notification(`⏰ VidyaSetu Study Time: ${r.title}`, {
-              body: r.notes || 'Time for your scheduled subject practice quiz!',
+              body: r.notes || 'Time for your continuous practice questions!',
               icon: '/favicon.ico'
             });
           }
@@ -148,6 +181,12 @@ export default function App() {
       const result = await googleSignIn();
       if (result) {
         setCurrentUser(result.user);
+        const linked = linkGoogleUser(
+          result.user.displayName || 'Google Student', 
+          result.user.email || '', 
+          result.user.photoURL || undefined
+        );
+        reloadUserState(linked);
         setShowSheetsModal(true);
       }
     } catch (err) {
@@ -162,7 +201,7 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  // Google Sheets Management
+  // Google Sheets Sync
   const handleCreateSpreadsheet = async () => {
     const token = await getAccessToken();
     if (!token) throw new Error('Please sign in with Google first.');
@@ -177,7 +216,6 @@ export default function App() {
     setSheetsConfig(updated);
     saveSheetsConfig(updated);
 
-    // Initial sync
     await syncAllProgressToSheet(token, res.spreadsheetId, progressMap, reminders);
   };
 
@@ -225,37 +263,46 @@ export default function App() {
     return ok;
   };
 
-  // Start Quiz
-  const handleStartQuiz = (subjId: SubjectId, mode: QuizMode = 'practice', count: number = 10) => {
-    const matching = QUESTIONS.filter(q => q.subjectId === subjId);
-    // Shuffle and pick requested count
-    const shuffled = [...matching].sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, Math.min(count, matching.length));
+  // START SEQUENTIAL QUIZ (Continues in exact PDF order, no repeats for same user)
+  const handleStartSequentialQuiz = (subjId: SubjectId, count: number = 10) => {
+    const { questions, startPdfNo, endPdfNo } = getNextQuestionsForUser(activeUser.id, subjId, count);
 
     setActiveSubjectId(subjId);
-    setActiveQuizMode(mode);
-    setActiveQuizQuestions(selected);
+    setActiveQuizMode('practice');
+    setActiveQuizQuestions(questions);
+    setCurrentStartPdfNo(startPdfNo);
+    setCurrentEndPdfNo(endPdfNo);
     setLastAttempt(null);
   };
 
-  // Complete Quiz
+  const handleResetProgression = (subjId: SubjectId) => {
+    resetUserProgression(activeUser.id, subjId);
+    setProgressMap(getSubjectProgressMap(activeUser.id));
+  };
+
+  // COMPLETE QUIZ
   const handleCompleteQuiz = (
     attempt: QuizAttempt, 
     answersMap: Record<number, number>, 
     flaggedSet: Set<number>
   ) => {
     saveQuizAttempt(attempt);
+
+    // Mark questions as answered for this user so they are NOT repeated next time
+    const answeredIds = activeQuizQuestions.map(q => q.id);
+    markQuestionsAsAnsweredForUser(activeUser.id, attempt.subjectId, answeredIds);
+
     setLastAttempt(attempt);
     setLastUserAnswers(answersMap);
     setLastFlaggedSet(flaggedSet);
 
-    // Refresh state
-    setAttempts(getStoredAttempts());
-    setProgressMap(getSubjectProgressMap());
-    setUserStats(getUserStats());
+    // Refresh user state
+    setAttempts(getStoredAttempts(activeUser.id));
+    setProgressMap(getSubjectProgressMap(activeUser.id));
+    setUserStats(getUserStats(activeUser.id));
     setLeaderboardUsers(getLeaderboardData());
 
-    // Auto sync to sheets if configured & logged in
+    // Auto sync to sheets if configured & token available
     getAccessToken().then(token => {
       if (token && sheetsConfig.spreadsheetId && sheetsConfig.isAutoSyncEnabled) {
         appendQuizAttemptToSheet(token, sheetsConfig.spreadsheetId, attempt);
@@ -292,8 +339,10 @@ export default function App() {
           setActiveTab(tab);
         }}
         userStats={userStats}
+        activeUser={activeUser}
         currentUser={currentUser}
         sheetsConfig={sheetsConfig}
+        onOpenLoginModal={() => setShowLoginModal(true)}
         onGoogleSignIn={handleGoogleSignIn}
         onGoogleSignOut={handleGoogleSignOut}
         onOpenSheetsModal={() => setShowSheetsModal(true)}
@@ -303,8 +352,8 @@ export default function App() {
 
       {/* In-app Reminder Toast Notification */}
       {reminderToast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-indigo-900 text-white rounded-2xl p-4 shadow-2xl border border-indigo-500/50 flex items-start gap-3 animate-slide-up">
-          <div className="w-8 h-8 rounded-xl bg-indigo-700 flex items-center justify-center shrink-0">
+        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-indigo-900 text-white rounded-3xl p-4 shadow-2xl border border-indigo-500/50 flex items-start gap-3 animate-slide-up">
+          <div className="w-9 h-9 rounded-2xl bg-indigo-700 flex items-center justify-center shrink-0">
             <BellRing className="w-5 h-5 text-amber-400 animate-bounce" />
           </div>
           <div className="flex-1">
@@ -332,6 +381,9 @@ export default function App() {
             subject={activeSubjectInfo}
             mode={activeQuizMode}
             questions={activeQuizQuestions}
+            startPdfNo={currentStartPdfNo}
+            endPdfNo={currentEndPdfNo}
+            userId={activeUser.id}
             onCompleteQuiz={handleCompleteQuiz}
             onExitQuiz={handleExitQuiz}
           />
@@ -345,7 +397,10 @@ export default function App() {
             questions={activeQuizQuestions}
             userAnswers={lastUserAnswers}
             flaggedSet={lastFlaggedSet}
-            onRetake={() => handleStartQuiz(activeSubjectId, activeQuizMode, activeQuizQuestions.length)}
+            onContinueNextBatch={() => handleStartSequentialQuiz(activeSubjectId, 10)}
+            onRetake={() => {
+              setLastAttempt(null);
+            }}
             onBackToHome={handleExitQuiz}
             onSyncToSheets={handleSyncAttemptToSheets}
             spreadsheetUrl={sheetsConfig.spreadsheetUrl}
@@ -364,10 +419,15 @@ export default function App() {
                 <div className="bg-gradient-to-br from-indigo-900 via-indigo-800 to-purple-900 rounded-3xl p-6 sm:p-10 text-white shadow-xl relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-96 h-96 bg-white/5 rounded-full blur-3xl pointer-events-none" />
                   
-                  <div className="relative z-10 max-w-2xl">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-indigo-200 text-xs font-bold uppercase tracking-wider mb-4">
-                      <GraduationCap className="w-4 h-4 text-amber-400" />
-                      <span>AP &amp; TS TET 2A Teacher Eligibility Test</span>
+                  <div className="relative z-10 max-w-3xl">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-indigo-200 text-xs font-bold uppercase tracking-wider">
+                        <GraduationCap className="w-4 h-4 text-amber-400" />
+                        <span>AP &amp; TS TET 2A Question Bank</span>
+                      </div>
+                      <div className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs font-bold">
+                        Continuous Sequential Mode Active
+                      </div>
                     </div>
 
                     <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
@@ -375,24 +435,31 @@ export default function App() {
                     </h1>
 
                     <p className="text-indigo-100 text-sm sm:text-base mt-3 leading-relaxed">
-                      Prepare with authentic bilingual practice questions across Child Development &amp; Pedagogy, Telugu, English, Mathematics, Physical Science, and Biology. Track your progress and sync achievements directly with Google Sheets.
+                      Questions are delivered in the <span className="font-bold text-white underline decoration-amber-400">exact sequential order as printed in the exam question bank</span>. Your progress is saved so questions are <span className="font-bold text-amber-300">never repeated</span> for your student account!
                     </p>
 
-                    {/* Quick Stats Banner inside hero */}
                     <div className="flex flex-wrap items-center gap-4 sm:gap-6 mt-6 pt-6 border-t border-white/10 text-xs">
                       <div>
-                        <span className="text-indigo-300 block">Total Questions</span>
-                        <span className="text-lg font-black text-white">2,000+ Bits</span>
+                        <span className="text-indigo-300 block">Logged In As</span>
+                        <span className="text-base font-black text-white flex items-center gap-1.5 mt-0.5">
+                          <span>{activeUser.avatar}</span>
+                          <span>{activeUser.name}</span>
+                        </span>
                       </div>
                       <div className="w-px h-8 bg-white/20" />
                       <div>
-                        <span className="text-indigo-300 block">Languages</span>
-                        <span className="text-lg font-black text-white">English &amp; తెలుగు</span>
+                        <span className="text-indigo-300 block">Sequential Order</span>
+                        <span className="text-base font-black text-emerald-400">Page-by-Page PDF</span>
                       </div>
                       <div className="w-px h-8 bg-white/20" />
                       <div>
-                        <span className="text-indigo-300 block">Google Sheets Sync</span>
-                        <span className="text-lg font-black text-emerald-400">Available ✓</span>
+                        <span className="text-indigo-300 block">Step Derivations</span>
+                        <span className="text-base font-black text-amber-300">Math &amp; Physics</span>
+                      </div>
+                      <div className="w-px h-8 bg-white/20" />
+                      <div>
+                        <span className="text-indigo-300 block">Memory Tricks</span>
+                        <span className="text-base font-black text-pink-300">CDP, Telugu, Eng, Bio</span>
                       </div>
                     </div>
                   </div>
@@ -402,10 +469,10 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-                      Select Practice Subject
+                      Subject Question Banks
                     </h2>
                     <p className="text-xs sm:text-sm text-slate-500">
-                      Choose a subject below to launch quick practice drills, mastery tests, or concept flashcards.
+                      Select a subject to continue from your last unanswered question in the PDF sequence.
                     </p>
                   </div>
 
@@ -413,7 +480,7 @@ export default function App() {
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder="Search subject by name or తెలుగు..."
+                      placeholder="Search subject or తెలుగు..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs sm:text-sm shadow-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
@@ -423,38 +490,49 @@ export default function App() {
 
                 {/* Subject Cards Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredSubjects.map(subj => (
-                    <SubjectCard
-                      key={subj.id}
-                      subject={subj}
-                      progress={progressMap[subj.id]}
-                      onStartQuiz={handleStartQuiz}
-                      onOpenFlashcards={handleOpenFlashcards}
-                    />
-                  ))}
+                  {filteredSubjects.map(subj => {
+                    const answeredList = getUserAnsweredQuestionIds(activeUser.id, subj.id);
+                    return (
+                      <SubjectCard
+                        key={subj.id}
+                        subject={subj}
+                        progress={progressMap[subj.id]}
+                        answeredCount={answeredList.length}
+                        totalAvailable={subj.totalAvailable}
+                        onStartSequentialQuiz={handleStartSequentialQuiz}
+                        onResetProgression={handleResetProgression}
+                        onOpenFlashcards={handleOpenFlashcards}
+                      />
+                    );
+                  })}
                 </div>
 
-                {/* Quick Practice All Features Banner */}
+                {/* Switch Student Banner */}
                 <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center shrink-0">
-                      <Sparkles className="w-6 h-6 text-indigo-600" />
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center shrink-0 text-2xl">
+                      {activeUser.avatar}
                     </div>
                     <div>
-                      <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                        Study Consistency Engine
-                      </h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                          Current Student: {activeUser.name}
+                        </h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                          Continuous Progress Active
+                        </span>
+                      </div>
                       <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-xl mt-0.5">
-                        Students who maintain a 5-day study streak and practice 10 questions daily improve retention by over 45%. Set your custom reminders now!
+                        Multiple students using this device? Switch or create profiles anytime so everyone receives non-repeating questions in sequence.
                       </p>
                     </div>
                   </div>
 
                   <button
-                    onClick={() => setActiveTab('reminders')}
-                    className="flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/20 transition-all shrink-0"
+                    onClick={() => setShowLoginModal(true)}
+                    className="flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold text-xs sm:text-sm shadow-md transition-all shrink-0"
                   >
-                    <span>Manage Reminders</span>
+                    <span>Switch / Manage Students</span>
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -466,7 +544,7 @@ export default function App() {
                 userStats={userStats}
                 progressMap={progressMap}
                 attempts={attempts}
-                onStartQuiz={(id) => handleStartQuiz(id, 'practice', 10)}
+                onStartQuiz={(id) => handleStartSequentialQuiz(id, 10)}
                 onSyncAllToSheets={handleSyncAllToSheets}
                 spreadsheetUrl={sheetsConfig.spreadsheetUrl}
                 hasGoogleAuth={!!currentUser}
@@ -477,30 +555,40 @@ export default function App() {
             {activeTab === 'leaderboard' && (
               <Leaderboard
                 users={leaderboardUsers}
-                onStartQuiz={() => handleStartQuiz('cdp', 'practice', 10)}
+                onStartQuiz={() => handleStartSequentialQuiz('cdp', 10)}
               />
             )}
 
             {activeTab === 'reminders' && (
               <StudyReminders
                 reminders={reminders}
+                userId={activeUser.id}
                 onSaveReminders={(updated) => {
                   setReminders(updated);
-                  saveReminders(updated);
+                  saveReminders(updated, activeUser.id);
                 }}
-                onStartQuiz={(id) => handleStartQuiz(id, 'practice', 10)}
+                onStartQuiz={(id) => handleStartSequentialQuiz(id, 10)}
               />
             )}
 
             {activeTab === 'flashcards' && (
               <FlashcardsView
                 initialSubjectId={flashcardSubjectId}
-                onStartQuiz={(id) => handleStartQuiz(id, 'practice', 10)}
+                onStartQuiz={(id) => handleStartSequentialQuiz(id, 10)}
               />
             )}
           </>
         )}
       </main>
+
+      {/* Login & Student Switcher Modal */}
+      <LoginModal
+        isOpen={showLoginModal}
+        onClose={() => setShowLoginModal(false)}
+        onGoogleSignIn={handleGoogleSignIn}
+        onUserChanged={(u) => reloadUserState(u)}
+        isLoggingIn={isLoggingIn}
+      />
 
       {/* Google Sheets Modal Hub */}
       <GoogleSheetsModal
@@ -519,10 +607,12 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="font-extrabold text-slate-800 dark:text-slate-200">VidyaSetu</span>
-            <span>• TET &amp; Competitive Exam Practice Platform</span>
+            <span>• TET Continuous Sequential Question Bank &amp; Progress Platform</span>
           </div>
           <div className="flex items-center gap-4">
-            <span>Bilingual Support (Telugu &amp; English)</span>
+            <span>Non-Repeating Questions</span>
+            <span>•</span>
+            <span>Step Derivations &amp; Memory Tricks</span>
             <span>•</span>
             <span>Google Sheets Sync Ready</span>
           </div>
