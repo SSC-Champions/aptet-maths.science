@@ -1,0 +1,102 @@
+export type SubjectId = 
+  | 'cdp' 
+  | 'telugu' 
+  | 'english' 
+  | 'mathematics' 
+  | 'physical_science' 
+  | 'biology';
+
+export interface SubjectInfo {
+  id: SubjectId;
+  name: string;
+  teluguName: string;
+  description: string;
+  icon: string;
+  color: string;
+  gradient: string;
+  borderColor: string;
+  badgeBg: string;
+  totalAvailable: number;
+}
+
+export interface Question {
+  id: number;
+  subjectId: SubjectId;
+  topic?: string;
+  questionEn?: string;
+  questionTe?: string;
+  options: {
+    key: number; // 1, 2, 3, 4
+    textEn?: string;
+    textTe?: string;
+  }[];
+  correctAnswer: number; // 1 | 2 | 3 | 4
+  explanation?: string;
+}
+
+export type QuizMode = 'practice' | 'mastery' | 'timed_exam' | 'flashcard';
+
+export interface QuizAttempt {
+  id: string;
+  subjectId: SubjectId;
+  subjectName: string;
+  mode: QuizMode;
+  date: string;
+  totalQuestions: number;
+  correctAnswers: number;
+  scorePercentage: number;
+  timeSpentSeconds: number;
+  xpEarned: number;
+  syncedToSheets?: boolean;
+}
+
+export interface SubjectProgress {
+  subjectId: SubjectId;
+  quizzesTaken: number;
+  totalAnswered: number;
+  correctAnswered: number;
+  bestScorePercentage: number;
+  lastPracticed?: string;
+  masteryLevel: 'Novice' | 'Intermediate' | 'Proficient' | 'Master';
+}
+
+export interface UserStats {
+  totalXp: number;
+  quizzesCompleted: number;
+  totalQuestionsAnswered: number;
+  correctAnswersTotal: number;
+  currentStreakDays: number;
+  lastActiveDate: string;
+  achievements: string[];
+}
+
+export interface StudyReminder {
+  id: string;
+  subjectId: SubjectId;
+  title: string;
+  time: string; // "18:30"
+  days: ('Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun')[];
+  enabled: boolean;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface LeaderboardUser {
+  id: string;
+  name: string;
+  avatar: string;
+  xp: number;
+  quizzesTaken: number;
+  accuracy: number;
+  isCurrentUser?: boolean;
+  badge?: string;
+  rank?: number;
+  streak: number;
+}
+
+export interface GoogleSheetsConfig {
+  spreadsheetId: string | null;
+  spreadsheetUrl: string | null;
+  lastSyncedAt: string | null;
+  isAutoSyncEnabled: boolean;
+}

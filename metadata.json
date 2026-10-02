@@ -1,0 +1,6 @@
+{
+  "name": "VidyaSetu - Subject-wise Practice Quizzes & Progress Tracker",
+  "description": "Master exam preparation with bilingual subject-wise quizzes across CDP, Telugu, English, Mathematics, Physical Science, and Biology, featuring progress tracking, leaderboard, study reminders, and Google Sheets sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
